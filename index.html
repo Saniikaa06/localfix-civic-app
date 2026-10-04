@@ -39,6 +39,9 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .stats div{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px;text-align:center}
 .stats b{display:block;font-size:1.3rem}
 .stats span{font-size:.72rem}
+.sugg{border:1px solid var(--line);border-radius:6px;margin-top:6px;background:#fff;max-height:180px;overflow:auto}
+.sugg button{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:#fff;padding:8px;font:inherit;font-size:.82rem;cursor:pointer}
+.sugg button:hover,.sugg button:focus-visible{background:#e4ece9}
 .hide{display:none!important}
 </style>
 </head>
@@ -61,7 +64,12 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
         <label for="photo">Photo</label>
         <input id="photo" type="file" accept="image/*" capture="environment">
         <img id="preview" alt="Photo preview">
-        <label>Location</label>
+        <label for="q">Location</label>
+        <div class="row" style="margin-top:0">
+          <input id="q" type="search" placeholder="Search a place, e.g. Tiptur bus stand" autocomplete="off" style="flex:1">
+          <button class="act" id="go" type="button">Search</button>
+        </div>
+        <div id="sugg" class="sugg hide" role="listbox"></div>
         <p class="hint" id="locTxt">Tap the map to place a pin, or use your current location.</p>
         <div class="row">
           <button class="act ghost" id="gps" type="button">Use my location</button>
@@ -122,6 +130,45 @@ $('gps').onclick = () => {
   navigator.geolocation.getCurrentPosition(p => { setPin(p.coords.latitude, p.coords.longitude); map.setView([p.coords.latitude, p.coords.longitude], 16); },
     () => { $('msg').textContent = 'Location was blocked. Tap the map to place a pin.'; });
 };
+
+// Place search (free OpenStreetMap Nominatim, no key needed)
+let results = [], timer = null;
+async function searchPlace(auto) {
+  const q = $('q').value.trim();
+  if (q.length < 3) { $('sugg').classList.add('hide'); return; }
+  results = [];
+  try {
+    const c = map.getCenter();
+    const r = await fetch('https://photon.komoot.io/api/?limit=5&lat=' + c.lat + '&lon=' + c.lng + '&q=' + encodeURIComponent(q));
+    const j = await r.json();
+    results = (j.features || []).map(f => {
+      const p = f.properties;
+      return {lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0],
+        display_name: [p.name, p.street, p.district, p.city, p.state, p.country].filter(Boolean).join(', ')};
+    });
+  } catch (e) {
+    try {
+      const r2 = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=5&q=' + encodeURIComponent(q));
+      results = await r2.json();
+    } catch (e2) { $('msg').textContent = 'Search failed. Check your internet or tap the map instead.'; return; }
+  }
+  $('msg').textContent = '';
+  if (!results.length) { $('sugg').innerHTML = '<p class="hint" style="padding:8px">No place found. Try a different name.</p>'; $('sugg').classList.remove('hide'); return; }
+  if (auto) { choose(0); return; }
+  $('sugg').innerHTML = results.map((p, k) => '<button type="button" data-k="' + k + '">' + esc(p.display_name) + '</button>').join('');
+  $('sugg').classList.remove('hide');
+}
+function choose(k) {
+  const p = results[k]; if (!p) return;
+  const lat = parseFloat(p.lat), lng = parseFloat(p.lon);
+  setPin(lat, lng); map.setView([lat, lng], 17);
+  $('q').value = p.display_name.split(',').slice(0, 2).join(',');
+  $('sugg').classList.add('hide');
+}
+$('q').oninput = () => { clearTimeout(timer); timer = setTimeout(() => searchPlace(false), 700); };
+$('q').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(timer); searchPlace(true); } };
+$('go').onclick = () => searchPlace(true);
+$('sugg').onclick = e => { const b = e.target.closest('[data-k]'); if (b) choose(+b.dataset.k); };
 
 // Photo (resized so it fits in browser storage)
 $('photo').onchange = e => {
