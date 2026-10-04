@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LocalFix</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{--ink:#1b2a2f;--paper:#f3f6f4;--card:#fff;--line:#d5dedb;--brand:#0f6b5c;--red:#d94632;--amber:#e08a00;--blue:#2563b8;--green:#2e8b4f}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:var(--paper)}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;background:var(--brand);color:#fff;flex-wrap:wrap}
+header h1{margin:0;font-size:1.3rem}
+header p{margin:0;font-size:.8rem;opacity:.85}
+nav button{border:1px solid #ffffff88;background:transparent;color:#fff;padding:7px 16px;cursor:pointer;font-size:.9rem}
+nav button:first-child{border-radius:8px 0 0 8px}nav button:last-child{border-radius:0 8px 8px 0;border-left:0}
+nav button.on{background:#fff;color:var(--brand);font-weight:600}
+.wrap{display:grid;grid-template-columns:minmax(300px,420px) 1fr;gap:14px;padding:14px;height:calc(100vh - 62px)}
+@media(max-width:800px){.wrap{grid-template-columns:1fr;height:auto}#map{height:320px;order:-1}}
+.panel{overflow:auto;display:flex;flex-direction:column;gap:12px}
+#map{border-radius:10px;border:1px solid var(--line);min-height:320px;z-index:0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px}
+h2{font-size:1rem;margin:0 0 8px}
+label{display:block;font-size:.8rem;margin:8px 0 3px;font-weight:600}
+input,select,textarea{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;font:inherit;background:#fff}
+textarea{min-height:64px;resize:vertical}
+button.act{background:var(--brand);color:#fff;border:0;border-radius:6px;padding:9px 12px;cursor:pointer;font:inherit;font-weight:600}
+button.act.ghost{background:#e4ece9;color:var(--ink)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+.row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.hint{font-size:.8rem;color:#5d6f73;margin:6px 0 0}
+#preview{max-width:100%;max-height:140px;border-radius:6px;margin-top:6px;display:none}
+.issue{display:grid;grid-template-columns:70px 1fr;gap:10px;cursor:pointer}
+.issue img,.issue .ph{width:70px;height:70px;object-fit:cover;border-radius:6px;background:#e4ece9}
+.issue h3{margin:0;font-size:.92rem}
+.issue small{color:#5d6f73}
+.badge{display:inline-block;font-size:.72rem;color:#fff;border-radius:99px;padding:2px 8px;margin-right:6px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.stats div{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px;text-align:center}
+.stats b{display:block;font-size:1.3rem}
+.stats span{font-size:.72rem}
+.hide{display:none!important}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>LocalFix</h1><p>Report local problems. Track them until they are fixed.</p></div>
+  <nav><button id="tabC" class="on">Citizen</button><button id="tabA">Authority</button></nav>
+</header>
+
+<div class="wrap">
+  <div class="panel">
+    <!-- CITIZEN VIEW -->
+    <div id="citizen" class="panel">
+      <div class="card">
+        <h2>Report a problem</h2>
+        <label for="cat">Type of problem</label>
+        <select id="cat"><option>Pothole</option><option>Garbage</option><option>Streetlight</option><option>Water leakage</option><option>Drainage</option><option>Other</option></select>
+        <label for="desc">What is wrong?</label>
+        <textarea id="desc" placeholder="Example: Big pothole near the bus stand"></textarea>
+        <label for="photo">Photo</label>
+        <input id="photo" type="file" accept="image/*" capture="environment">
+        <img id="preview" alt="Photo preview">
+        <label>Location</label>
+        <p class="hint" id="locTxt">Tap the map to place a pin, or use your current location.</p>
+        <div class="row">
+          <button class="act ghost" id="gps" type="button">Use my location</button>
+          <button class="act" id="submit" type="button">Submit report</button>
+        </div>
+        <p class="hint" id="msg" role="status"></p>
+      </div>
+      <div class="card"><h2>Reports in your area</h2><div id="clist"></div></div>
+    </div>
+
+    <!-- AUTHORITY VIEW -->
+    <div id="authority" class="panel hide">
+      <div class="stats" id="stats"></div>
+      <div class="card">
+        <label for="filter">Show</label>
+        <select id="filter"><option value="All">All reports</option><option>Reported</option><option>Assigned</option><option>In Progress</option><option>Resolved</option></select>
+        <div class="row">
+          <button class="act ghost" id="demo" type="button">Load demo data</button>
+          <button class="act ghost" id="clear" type="button">Clear all</button>
+        </div>
+      </div>
+      <div id="alist" class="panel"></div>
+    </div>
+  </div>
+  <div id="map" aria-label="Map of reported problems"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const KEY = 'localfix_issues_v1';
+const STATUS = ['Reported', 'Assigned', 'In Progress', 'Resolved'];
+const COLOR = {Reported:'#d94632', Assigned:'#e08a00', 'In Progress':'#2563b8', Resolved:'#2e8b4f'};
+let issues = [];
+try { issues = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) {}
+let mode = 'citizen', pin = null, pinMarker = null, photoData = '';
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(issues)); }
+  catch (e) { $('msg').textContent = 'Storage is full. Clear old reports or use smaller photos.'; }
+}
+
+// Map
+const map = L.map('map').setView([13.26, 76.47], 13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19, attribution: '&copy; OpenStreetMap'}).addTo(map);
+const layer = L.layerGroup().addTo(map);
+
+map.on('click', e => { if (mode === 'citizen') setPin(e.latlng.lat, e.latlng.lng); });
+function setPin(lat, lng) {
+  pin = {lat, lng};
+  if (pinMarker) map.removeLayer(pinMarker);
+  pinMarker = L.marker([lat, lng]).addTo(map);
+  $('locTxt').textContent = 'Pin set at ' + lat.toFixed(5) + ', ' + lng.toFixed(5);
+}
+$('gps').onclick = () => {
+  if (!navigator.geolocation) { $('msg').textContent = 'Your browser cannot share location. Tap the map instead.'; return; }
+  navigator.geolocation.getCurrentPosition(p => { setPin(p.coords.latitude, p.coords.longitude); map.setView([p.coords.latitude, p.coords.longitude], 16); },
+    () => { $('msg').textContent = 'Location was blocked. Tap the map to place a pin.'; });
+};
+
+// Photo (resized so it fits in browser storage)
+$('photo').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const s = Math.min(1, 600 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas'); c.width = img.width * s; c.height = img.height * s;
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      photoData = c.toDataURL('image/jpeg', 0.7);
+      $('preview').src = photoData; $('preview').style.display = 'block';
+    };
+    img.src = r.result;
+  };
+  r.readAsDataURL(f);
+};
+
+// Submit
+$('submit').onclick = () => {
+  const desc = $('desc').value.trim();
+  if (!desc) { $('msg').textContent = 'Describe the problem first.'; return; }
+  if (!pin) { $('msg').textContent = 'Place a pin on the map first.'; return; }
+  issues.unshift({id: Date.now(), cat: $('cat').value, desc, photo: photoData, lat: pin.lat, lng: pin.lng,
+    status: 'Reported', votes: 0, time: new Date().toISOString()});
+  save();
+  $('desc').value = ''; $('photo').value = ''; photoData = ''; $('preview').style.display = 'none';
+  if (pinMarker) map.removeLayer(pinMarker); pinMarker = null; pin = null;
+  $('locTxt').textContent = 'Tap the map to place a pin, or use your current location.';
+  $('msg').textContent = 'Report submitted. Authorities can now see it.';
+  render();
+};
+
+// Render
+function badge(s) { return '<span class="badge" style="background:' + COLOR[s] + '">' + s + '</span>'; }
+function thumb(i) { return i.photo ? '<img src="' + i.photo + '" alt="">' : '<div class="ph"></div>'; }
+function when(t) { return new Date(t).toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'}); }
+
+function render() {
+  layer.clearLayers();
+  issues.forEach(i => {
+    L.circleMarker([i.lat, i.lng], {radius: 9, color: '#fff', weight: 2, fillColor: COLOR[i.status], fillOpacity: 1})
+      .bindPopup('<b>' + esc(i.cat) + '</b><br>' + esc(i.desc) + '<br>' + i.status).addTo(layer);
+  });
+
+  // citizen list
+  $('clist').innerHTML = issues.length ? issues.map(i =>
+    '<div class="card issue" data-id="' + i.id + '" style="margin-bottom:8px">' + thumb(i) +
+    '<div><h3>' + esc(i.cat) + '</h3>' + badge(i.status) + '<small>' + when(i.time) + '</small>' +
+    '<div>' + esc(i.desc) + '</div>' +
+    '<button class="act ghost" style="margin-top:6px;padding:4px 10px" data-vote="' + i.id + '">I see this too (' + i.votes + ')</button></div></div>'
+  ).join('') : '<p class="hint">No reports yet. Be the first to report a problem.</p>';
+
+  // stats
+  $('stats').innerHTML = STATUS.map(s => '<div><b style="color:' + COLOR[s] + '">' + issues.filter(i => i.status === s).length + '</b><span>' + s + '</span></div>').join('');
+
+  // authority list: most upvoted first
+  const f = $('filter').value;
+  const list = issues.filter(i => f === 'All' || i.status === f).sort((a, b) => b.votes - a.votes);
+  $('alist').innerHTML = list.length ? list.map(i =>
+    '<div class="card issue" data-id="' + i.id + '">' + thumb(i) +
+    '<div><h3>' + esc(i.cat) + ' <small>(' + i.votes + ' votes)</small></h3><small>' + when(i.time) + '</small>' +
+    '<div>' + esc(i.desc) + '</div>' +
+    '<select data-status="' + i.id + '" style="margin-top:6px">' + STATUS.map(s => '<option' + (s === i.status ? ' selected' : '') + '>' + s + '</option>').join('') + '</select></div></div>'
+  ).join('') : '<p class="hint">No reports match this filter.</p>';
+}
+
+document.addEventListener('click', e => {
+  const v = e.target.closest('[data-vote]');
+  if (v) { const i = issues.find(x => x.id == v.dataset.vote); i.votes++; save(); render(); return; }
+  const c = e.target.closest('.issue');
+  if (c && !e.target.closest('select')) { const i = issues.find(x => x.id == c.dataset.id); if (i) map.setView([i.lat, i.lng], 17); }
+});
+document.addEventListener('change', e => {
+  if (e.target.dataset.status) { issues.find(x => x.id == e.target.dataset.status).status = e.target.value; save(); render(); }
+});
+$('filter').onchange = render;
+
+// Tabs
+function setMode(m) {
+  mode = m;
+  $('citizen').classList.toggle('hide', m !== 'citizen');
+  $('authority').classList.toggle('hide', m !== 'authority');
+  $('tabC').classList.toggle('on', m === 'citizen');
+  $('tabA').classList.toggle('on', m === 'authority');
+}
+$('tabC').onclick = () => setMode('citizen');
+$('tabA').onclick = () => setMode('authority');
+
+// Demo data and reset
+$('demo').onclick = () => {
+  const c = map.getCenter(), now = Date.now();
+  const d = [['Pothole','Deep pothole on main road near bus stand',.004,.003,'Reported',12],
+    ['Garbage','Garbage not collected for 5 days',-.003,.005,'Assigned',8],
+    ['Streetlight','Streetlight not working, road is dark at night',.002,-.005,'In Progress',5],
+    ['Water leakage','Pipe leaking near the market',-.005,-.002,'Resolved',3]];
+  d.forEach((x, k) => issues.push({id: now + k, cat: x[0], desc: x[1], photo: '', lat: c.lat + x[2], lng: c.lng + x[3],
+    status: x[4], votes: x[5], time: new Date(now - k * 86400000).toISOString()}));
+  save(); render();
+};
+$('clear').onclick = () => { if (confirm('Delete all reports?')) { issues = []; save(); render(); } };
+
+render();
+</script>
+</body>
+</html>
